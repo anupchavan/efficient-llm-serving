@@ -30,10 +30,13 @@ if [ "${PILOT:-0}" = 1 ]; then
     CONFIGS=(fp16 awq_spec)
     PREFIX_EXPERIMENT=0
 else
-    RATES=(${RATES:-0.5 1 2 3 4 6 8 16 32})   # placeholder: set from the pilot
+    # Rates from the 2026-11-05 pilot: FP16 kept up with 8 req/s at ~1k tokens but
+    # saturated by 2 req/s at ~4k tokens, so the grid spans both regimes.
+    RATES=(${RATES:-1 2 3 4 6 8 12})
     WORKLOADS=(${WORKLOADS:-natural len512 len1024 len2048 len4096})
     REPEATS=${REPEATS:-3}
-    NUM_PROMPTS=${NUM_PROMPTS:-500}
+    # len4096 has only 215 distinct real prompts, so 200 keeps every run free of repeats.
+    NUM_PROMPTS=${NUM_PROMPTS:-200}
     CONFIGS=(${CONFIGS:-fp16 awq spec awq_spec})
     PREFIX_EXPERIMENT=${PREFIX_EXPERIMENT:-1}
 fi
