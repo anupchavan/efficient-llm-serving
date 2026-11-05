@@ -1,6 +1,6 @@
 # Larger-model sweep with real prompts: plan
 
-Status: plan and scripts ready, nothing rented or run yet. Prices were read on 2026-11-05 and change daily.
+Status: pilot done on 2026-11-05 (RunPod Secure Cloud A100 SXM4 80GB, $3.01 spent, all 16 runs passed the checks); full sweep not started. Prices were read on 2026-11-05 and change daily.
 
 ## 1. What we are repeating
 
@@ -54,7 +54,7 @@ Built by `v2/scripts/prepare_prompts.py` on the GPU host:
 
 - Configurations: FP16, AWQ, speculative, AWQ + speculative, all with prefix caching off; then FP16 and AWQ with caching off vs on, on the shared-prefix workload. With caching on, every run gets user prompts that no earlier run on that server used, so only the system prompts can be reused.
 - **3 repeats per setting** (the final presentation had one run per setting), each repeat a different sample of prompts.
-- 500 requests per run. Request rates are set **after the pilot**, around the measured capacity (the 3B rates of 2–64 would mostly be far past a 14B model's limit).
+- 200 requests per run (`len4096` has only 215 distinct real prompts, so this keeps every run free of repeats). Rates 1, 2, 3, 4, 6, 8, 12 requests/s, chosen from the pilot.
 - Every run saves per-request data. `v2/analysis/summarise.py` recomputes median TTFT and TPOT from it, checks for failed requests and wrong output lengths, and flags any run that does not match. No number goes into slides from a flagged run.
 
 ## 7. Cost and steps
