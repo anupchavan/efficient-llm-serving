@@ -18,7 +18,7 @@ Outputs in --out:
                  plus a user prompt of at most 1,024 tokens
   stats.json     counts and token-length percentiles per file, source hashes
 """
-import argparse, csv, hashlib, json, os, random, statistics
+import argparse, csv, hashlib, json, os, random, statistics, sys
 
 
 def sha256(path):
@@ -115,15 +115,25 @@ def main(argv=None, tokenizer=None):
     write_jsonl(os.path.join(a.out, 'natural.jsonl'), natural)
     stats['files']['natural.jsonl'] = describe(natural)
 
-    roles = []
+    # Write what we have so far, so the bucket counts survive a failure below.
+    json.dump(stats, open(os.path.join(a.out, 'stats.json'), 'w'), indent=2)
+
+    # The current prompts.csv has some very long fields; the csv module's
+    # default limit (131,072 chars) rejects them.
+    csv.field_size_limit(sys.maxsize)
+    roles, n_long = [], 0
     with open(a.role_prompts, encoding='utf-8') as f:
         reader = csv.DictReader(f)
         if 'prompt' not in (reader.fieldnames or []):
             raise SystemExit(f'{a.role_prompts} has no "prompt" column: {reader.fieldnames}')
         for row in reader:
             text = (row.get('prompt') or '').strip()
-            if text:
+            if len(text) > 4000:      # not a system prompt; skip it
+                n_long += 1
+            elif text:
                 roles.append(text)
+    stats['role_prompts_usable'] = len(roles)
+    stats['role_prompts_over_4000_chars_skipped'] = n_long
     rng.shuffle(roles)
     roles = roles[:a.num_prefixes]
     if len(roles) < a.num_prefixes:
