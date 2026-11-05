@@ -60,7 +60,8 @@ for f in sorted(glob.glob(os.path.join(RAW, '*.json'))):
 if not rows:
     sys.exit(f'no result files in {RAW}')
 fields = list(dict.fromkeys(k for r in rows for k in r))
-out_dir = os.path.dirname(os.path.normpath(RAW))
+# data/raw -> data/summary.csv; any other folder (e.g. data/pilot) gets its own summary.
+out_dir = os.path.dirname(os.path.normpath(RAW)) if os.path.basename(os.path.normpath(RAW)) == 'raw' else RAW
 with open(os.path.join(out_dir, 'summary.csv'), 'w', newline='') as out:
     w = csv.DictWriter(out, fieldnames=fields)
     w.writeheader()
