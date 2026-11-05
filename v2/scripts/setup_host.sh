@@ -2,7 +2,7 @@
 # One-time setup on the rented GPU host. Run from the repository root.
 set -euo pipefail
 python3 -m venv ~/venv && source ~/venv/bin/activate
-pip install vllm==0.30.0          # same vLLM as the earlier sweeps
+pip install "vllm[bench]==0.30.0"   # same vLLM as the earlier sweeps; [bench] adds pandas etc. for vllm bench
 nvidia-smi
 mkdir -p v2/sources v2/prompts
 HF=https://huggingface.co/datasets

@@ -110,7 +110,9 @@ run_grid() {
                     --num-prompts $NUM_PROMPTS --request-rate $RATE --seed $REP \
                     --save-result --save-detailed --result-filename "$F" \
                     --metadata config=$NAME workload=$WL rep=$REP \
-                    >> "./v2/logs/bench_$NAME.log" 2>&1 || echo "FAILED $F"
+                    >> "./v2/logs/bench_$NAME.log" 2>&1 || {
+                    # Stop at the first failure instead of burning GPU time on a broken setup.
+                    echo "FAILED $F, see v2/logs/bench_$NAME.log"; return 1; }
                 sleep 2
             done
         done
@@ -120,7 +122,7 @@ run_grid() {
 for C in "${CONFIGS[@]}"; do
     M=$(model_of $C)
     start_server $C "$M" "$(args_of $C)" || continue
-    run_grid $C "$M" "${WORKLOADS[@]}"
+    run_grid $C "$M" "${WORKLOADS[@]}" || { stop_server; echo "stopping: $C failed"; exit 1; }
     stop_server
 done
 
@@ -128,7 +130,7 @@ if [ "$PREFIX_EXPERIMENT" = 1 ]; then
     for C in fp16_cacheoff fp16_cacheon awq_cacheoff awq_cacheon; do
         M=$(model_of $C)
         start_server $C "$M" "$(args_of $C)" || continue
-        run_grid $C "$M" prefix
+        run_grid $C "$M" prefix || { stop_server; echo "stopping: $C failed"; exit 1; }
         stop_server
     done
 fi
