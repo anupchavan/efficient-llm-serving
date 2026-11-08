@@ -93,48 +93,52 @@ prefix_slice() {
 }
 
 run_grid() {
-    local NAME=$1 MODEL=$2; shift 2
-    local WLS=("$@") K=0
+    local NAME=$1 MODEL=$2 REP=$3; shift 3
+    local WLS=("$@") I=0
     for WL in "${WLS[@]}"; do
         for RATE in "${RATES[@]}"; do
-            for REP in $(seq 1 $REPEATS); do
-                local F="$OUT/${NAME}_${WL}_rate${RATE}_rep${REP}.json"
-                local DATA="$PROMPTS/$WL.jsonl" ORDER=""
-                if [ "$WL" = prefix ]; then
-                    DATA=$(prefix_slice $K) || return 1
-                    ORDER="--disable-shuffle"
-                fi
-                K=$((K + 1))
-                [ -f "$F" ] && { echo "skip $F"; continue; }
-                # --seed REP draws a different shuffle of the prompt file per repeat.
-                vllm bench serve --model "$MODEL" \
-                    --dataset-name custom --dataset-path "$DATA" $ORDER --skip-chat-template \
-                    --custom-output-len $OUTPUT_LEN --ignore-eos $SAMPLING \
-                    --num-prompts $NUM_PROMPTS --request-rate $RATE --seed $REP \
-                    --save-result --save-detailed --result-filename "$F" \
-                    --metadata config=$NAME workload=$WL rep=$REP \
-                    >> "./v2/logs/bench_$NAME.log" 2>&1 || {
-                    # Stop at the first failure instead of burning GPU time on a broken setup.
-                    echo "FAILED $F, see v2/logs/bench_$NAME.log"; return 1; }
-                sleep 2
-            done
+            local F="$OUT/${NAME}_${WL}_rate${RATE}_rep${REP}.json"
+            local DATA="$PROMPTS/$WL.jsonl" ORDER=""
+            if [ "$WL" = prefix ]; then
+                # Slice number unique per (repeat, rate); cache-off and cache-on use the same slices.
+                DATA=$(prefix_slice $(((REP - 1) * ${#RATES[@]} + I))) || return 1
+                ORDER="--disable-shuffle"
+            fi
+            I=$((I + 1))
+            [ -f "$F" ] && { echo "skip $F"; continue; }
+            # --seed REP draws a different shuffle of the prompt file per repeat.
+            vllm bench serve --model "$MODEL" \
+                --dataset-name custom --dataset-path "$DATA" $ORDER --skip-chat-template \
+                --custom-output-len $OUTPUT_LEN --ignore-eos $SAMPLING \
+                --num-prompts $NUM_PROMPTS --request-rate $RATE --seed $REP \
+                --save-result --save-detailed --result-filename "$F" \
+                --metadata config=$NAME workload=$WL rep=$REP \
+                >> "./v2/logs/bench_$NAME.log" 2>&1 || {
+                # Stop at the first failure instead of burning GPU time on a broken setup.
+                echo "FAILED $F, see v2/logs/bench_$NAME.log"; return 1; }
+            sleep 2
         done
     done
 }
 
-for C in "${CONFIGS[@]}"; do
-    M=$(model_of $C)
-    start_server $C "$M" "$(args_of $C)" || continue
-    run_grid $C "$M" "${WORKLOADS[@]}" || { stop_server; echo "stopping: $C failed"; exit 1; }
-    stop_server
-done
-
-if [ "$PREFIX_EXPERIMENT" = 1 ]; then
-    for C in fp16_cacheoff fp16_cacheon awq_cacheoff awq_cacheon; do
+# Repeats are the outer loop, so if the money or the pod runs out, every
+# configuration already has the same number of complete repeats.
+PREFIX_CONFIGS=()
+[ "$PREFIX_EXPERIMENT" = 1 ] && PREFIX_CONFIGS=(fp16_cacheoff fp16_cacheon awq_cacheoff awq_cacheon)
+for REP in $(seq 1 $REPEATS); do
+    for C in "${CONFIGS[@]}" "${PREFIX_CONFIGS[@]}"; do
+        case $C in *_cache*) WLS=(prefix) ;; *) WLS=("${WORKLOADS[@]}") ;; esac
+        # Skip the server start when every file for this repeat already exists.
+        TODO=0
+        for WL in "${WLS[@]}"; do for RATE in "${RATES[@]}"; do
+            [ -f "$OUT/${C}_${WL}_rate${RATE}_rep${REP}.json" ] || TODO=1
+        done; done
+        [ $TODO = 0 ] && continue
         M=$(model_of $C)
-        start_server $C "$M" "$(args_of $C)" || continue
-        run_grid $C "$M" prefix || { stop_server; echo "stopping: $C failed"; exit 1; }
+        start_server $C "$M" "$(args_of $C)" || { echo "stopping: server $C failed"; exit 1; }
+        run_grid $C "$M" $REP "${WLS[@]}" || { stop_server; echo "stopping: $C rep $REP failed"; exit 1; }
         stop_server
+        echo "finished $C rep $REP at $(date -u +%H:%M:%SZ)"
     done
-fi
+done
 echo "done"
