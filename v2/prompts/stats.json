@@ -1,0 +1,69 @@
+{
+  "sources": {
+    "sharegpt_sha256": "35f0e213ce091ed9b9af2a1f0755e9d39f9ccec34ab281cd4ca60d70f6479ba4",
+    "role_prompts_sha256": "d8ba1f2198727dbafe8757397e7c093b3452cff0b00481fef2ae1e9653c8b4a1"
+  },
+  "sharegpt_first_user_turns": 58808,
+  "exact_duplicates_dropped": 12378,
+  "tolerance": 0.2,
+  "files": {
+    "len512.jsonl": {
+      "count": 1643,
+      "mean": 501.0,
+      "median": 496,
+      "p10": 424,
+      "p90": 588,
+      "min": 410,
+      "max": 614
+    },
+    "len1024.jsonl": {
+      "count": 1497,
+      "mean": 1009.6,
+      "median": 1008,
+      "p10": 860,
+      "p90": 1169,
+      "min": 820,
+      "max": 1228
+    },
+    "len2048.jsonl": {
+      "count": 939,
+      "mean": 2004.3,
+      "median": 1973,
+      "p10": 1714,
+      "p90": 2361,
+      "min": 1641,
+      "max": 2456
+    },
+    "len4096.jsonl": {
+      "count": 215,
+      "mean": 3814.2,
+      "median": 3629,
+      "p10": 3323,
+      "p90": 4517,
+      "min": 3278,
+      "max": 4894
+    },
+    "natural.jsonl": {
+      "count": 46261,
+      "mean": 234.9,
+      "median": 44,
+      "p10": 20,
+      "p90": 674,
+      "min": 13,
+      "max": 4077
+    },
+    "prefix.jsonl": {
+      "count": 43178,
+      "mean": 394.8,
+      "median": 298.0,
+      "p10": 98,
+      "p90": 803,
+      "min": 45,
+      "max": 1848,
+      "num_prefixes": 32,
+      "approx_shared_fraction_median": 0.797
+    }
+  },
+  "role_prompts_usable": 2445,
+  "role_prompts_over_4000_chars_skipped": 480
+}
