@@ -35,7 +35,7 @@
   Vishank Singh (AI23BTECH11032) · Anup Chavan (CS23BTECH11005) \
   #v(0.1em)
   Repository: #link(repo) \
-  Final revision: tag `cs5903-final-2026`. The commit SHA is in the submission message; a file cannot contain the hash of the commit that adds it. \
+  Final revision: tag `cs5903-final-2026`. Code, data and documents are as of commit `3ec3731eda50a5332718bddea010b4d8001f2dbb`; the commits after it, up to the tag, change only this line. \
   21 November 2026
 ]
 
