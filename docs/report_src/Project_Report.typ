@@ -36,7 +36,7 @@
   #v(0.1em)
   Repository: #link(repo) \
   Final revision: tag `cs5903-final-2026` \
-  Code, data and documents are as of commit `3ec3731eda50a5332718bddea010b4d8001f2dbb`. \
+  Code, data and documents are as of commit `fcb288f04921ad35687a91de7e08e2ea63a77505`. \
   The commits after it, up to the tag, change only these lines. \
   21 November 2026
 ]
