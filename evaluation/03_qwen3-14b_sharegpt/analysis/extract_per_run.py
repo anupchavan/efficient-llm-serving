@@ -1,10 +1,11 @@
-"""v2/data/raw -> v2/data/per_run_extra.csv: compact per-run numbers not in summary.csv.
+"""data/raw -> data/per_run_extra.csv: compact per-run numbers not in summary.csv.
 
 TTFT and per-request TPOT percentiles are recomputed from the per-request arrays
 (same request filter and TPOT definition as summarise.py). Percentiles use linear
 interpolation, matching numpy.percentile's default, which vllm bench also uses.
 """
-import csv, glob, json, os, re, sys
+import csv, os, re, sys
+from rawio import runs
 
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..')
 RAW = sys.argv[1] if len(sys.argv) > 1 else os.path.join(ROOT, 'data', 'raw')
@@ -25,11 +26,10 @@ def pct(xs, q):
 
 
 rows = []
-for f in sorted(glob.glob(os.path.join(RAW, '*.json'))):
-    m = NAME.search(os.path.basename(f))
+for name, d in runs(RAW):
+    m = NAME.search(name)
     if not m:
         continue
-    d = json.load(open(f))
     ok = [i for i, n in enumerate(d.get('output_lens', [])) if n > 0]
     ttft = [d['ttfts'][i] * 1000 for i in ok]
     tpot = [(d['latencies'][i] - d['ttfts'][i]) / (d['output_lens'][i] - 1) * 1000

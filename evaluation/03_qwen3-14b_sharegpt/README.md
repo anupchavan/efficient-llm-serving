@@ -1,17 +1,58 @@
-# Qwen3-14B with real prompts: results
+# Study 3: Qwen3-14B with real prompts (final results)
 
-Sweep finished 2026-11-09. 504 runs on one RunPod A100 SXM4 80GB, all of which passed the checks in `analysis/summarise.py` (200 of 200 requests, 128 output tokens each, recomputed medians match vLLM's). Every number below is the mean of 3 repeats, each repeat with a different prompt sample. All tables come from `analysis/analyse.py` (full version in [`results/tables.md`](results/tables.md)), and goodput comes from `analysis/goodput.py`, run on the per-request data.
+504 runs on one A100 SXM4 80GB, 8–9 November 2026. All 504 passed the checks in `analysis/summarise.py` (200 of 200 requests completed, 128 output tokens each, medians recomputed from per-request data match vLLM's). Every number below is the mean of 3 repeats, each repeat with a different prompt sample. All tables come from `analysis/analyse.py` (full version in [`results/tables.md`](results/tables.md)), and goodput comes from `analysis/goodput.py`, run on the per-request data.
+
+## Files
+
+```
+scripts/setup_host.sh       install vLLM 0.30.0, download models and sources, build prompt files
+scripts/prepare_prompts.py  ShareGPT + role prompts -> prompts/*.jsonl and prompts/stats.json
+scripts/run_sweep.sh        start one vLLM server per configuration and run the grid
+data/raw/                   one vllm bench JSON per run, gzipped, with per-request timings
+data/pilot/                 the 16-run pilot of 5 November (same script with PILOT=1)
+data/summary.csv            one row per run, with the check result
+data/goodput.csv            per-run count of requests meeting TTFT < 1 s and TPOT < 50 ms
+data/per_run_extra.csv      per-run percentiles and token totals
+data/server_*.txt           what each server reported at start-up (KV cache size, flags, GPU)
+results/tables.md           every table, generated
+results/by_setting.csv      mean, min and max over the 3 repeats for each setting
+figures/                    generated plots
+logs/                       sweep log, server logs and benchmark logs
+```
+
+## Reproduce
+
+Analysis, on any machine (from this folder, after `pip install -r ../../requirements.txt`):
+
+```bash
+python3 analysis/summarise.py        # data/raw -> data/summary.csv, data/checks.txt
+python3 analysis/goodput.py          # data/raw -> data/goodput.csv
+python3 analysis/extract_per_run.py  # data/raw -> data/per_run_extra.csv
+python3 analysis/analyse.py          # CSVs -> results/, figures/
+```
+
+The CSVs and `results/` regenerate byte-for-byte; `tests/test_study3.py` checks this.
+
+Benchmarks need one GPU with 80 GB of memory and about 50 GB of disk for the three models and the source data. The full sweep took about 15 GPU-hours on an A100; the pilot takes under an hour.
+
+```bash
+./scripts/setup_host.sh              # once
+PILOT=1 ./scripts/run_sweep.sh       # 16 runs -> data/pilot/
+./scripts/run_sweep.sh               # 504 runs -> data/raw/
+```
+
+The models and both prompt sources are public on Hugging Face and need no token. `prompts/stats.json` records the SHA-256 of the two source files used.
 
 ## Setup
 
 | | |
 |---|---|
-| GPU | A100 SXM4 80GB (RunPod Secure Cloud) |
-| Server | vLLM 0.30.0, `--gpu-memory-utilization 0.95 --max-model-len 8192`, prefix caching off unless stated |
-| FP16 | Qwen3-14B in BF16 (we keep calling it FP16, as in the progress presentation) |
+| GPU | NVIDIA A100 SXM4 80GB (rented cloud instance), driver 595.91.07 |
+| Server | vLLM 0.30.0, `--gpu-memory-utilization 0.95 --max-model-len 8192 --seed 0`, prefix caching off unless stated |
+| FP16 | Qwen3-14B in BF16 (called FP16 here, as in the earlier studies) |
 | AWQ | Qwen/Qwen3-14B-AWQ, which vLLM ran with its Marlin kernel |
 | Speculative | Qwen3-0.6B draft, 5 tokens per step |
-| Load | `vllm bench serve`, 200 requests per run, Poisson arrivals at 1, 2, 3, 4, 6, 8 and 12 requests/s |
+| Load | `vllm bench serve`, 200 requests per run, Poisson arrivals at 1, 2, 3, 4, 6, 8 and 12 requests/s, `--seed` = repeat number |
 | Output | 128 tokens (`--ignore-eos`), temperature 0.7, top-p 0.8, top-k 20, thinking off |
 
 Prompts are first user turns from ShareGPT, deduplicated, with the chat template applied:
@@ -42,7 +83,7 @@ Median time per output token (TPOT) at 1 request/s, with the speed-up over FP16:
 
 - AWQ cuts TPOT about 2.3–2.4× for prompts up to about 1,000 tokens. Decode is limited by memory bandwidth, and AWQ weights are about a third of the size.
 - Speculative decoding gives 1.3–1.5× over FP16 at light load. Only 35–38% of drafted tokens are accepted, about 2.7–2.9 tokens per step (section 6). It also raises TTFT, from 59 to 103 ms on natural prompts and from 172 to 216 ms at len1024, because the draft model also runs prefill.
-- AWQ + speculative is slower than AWQ alone at every length (12.8 vs 8.6 ms at len512, 13.8 vs 9.5 ms at len1024). The progress presentation found the opposite on the 3B model (section 9).
+- AWQ + speculative is slower than AWQ alone at every length (12.8 vs 8.6 ms at len512, 13.8 vs 9.5 ms at len1024). Study 2 found the opposite on the 3B model (section 9).
 - At 2 and 4 requests/s the same order holds for natural and len512 prompts. For longer prompts these rates are near or above capacity (section 2), so TPOT there mostly reflects queueing (see `results/tables.md`).
 
 ## 2. Capacity: FP16 serves the most requests once prompts are long
@@ -57,7 +98,7 @@ Requests/s served when 12 requests/s are sent (range over 3 repeats in brackets)
 
 - At these lengths the served rate stops rising by 8 requests/s (by 2–3 requests/s at len2048 and len4096), so these are true capacities.
 - For natural and len512 prompts, most setups were still climbing at 12 requests/s. Those runs show only a lower bound on capacity (FP16 ≥ 9.2 and AWQ ≥ 8.6 at len512; FP16 ≥ 9.8 and AWQ ≥ 10.6 on natural), so we cannot rank capacity there. Only AWQ + speculative at len512 flattened, at 6.2.
-- **This differs from the progress presentation** (section 9). There, AWQ served slightly more than FP16 and speculative decoding served 25–29% more from 2,048 tokens. Here AWQ costs about 17% of capacity with long prompts, and speculative decoding also costs capacity.
+- **This differs from study 2** (section 9). There, AWQ served 1–3% more than FP16 from 1,024 tokens and speculative decoding served 21–27% more from 1,536 tokens. Here AWQ costs about 17% of capacity with long prompts, and speculative decoding also costs capacity.
 
 ![Served rate and TTFT against sent rate](figures/saturation.png)
 
@@ -71,7 +112,7 @@ Prompt tokens processed per second at 12 requests/s:
 | len2048 | 5,597 | 4,660 | 5,004 | 4,168 |
 | len4096 | 5,537 | 4,621 | 5,163 | 4,313 |
 
-FP16 processes about 5.5–5.6k prompt tokens/s whatever the prompt length, and AWQ about 4.6–4.7k. A flat rate across lengths means prefill compute is the limit, as in the progress presentation (about 4k prompt tokens/s there). AWQ is slower here, even though it decodes faster. A likely reason is that the Marlin kernel spends extra work turning 4-bit weights back into 16-bit numbers. That extra work is cheap when decode waits on memory, but it costs time when prefill already keeps the GPU's compute busy. **We have not profiled this, so treat it as a hypothesis.** The draft model's own prefill likely explains why speculative decoding loses capacity.
+FP16 processes about 5.5–5.6k prompt tokens/s whatever the prompt length, and AWQ about 4.6–4.7k. A flat rate across lengths means prefill compute is the limit, as in study 2 (3.6–3.9k new prompt tokens/s there). AWQ is slower here, even though it decodes faster. A likely reason is that the Marlin kernel spends extra work turning 4-bit weights back into 16-bit numbers. That extra work is cheap when decode waits on memory, but it costs time when prefill already keeps the GPU's compute busy. **We have not profiled this, so treat it as a hypothesis.** The draft model's own prefill likely explains why speculative decoding loses capacity.
 
 ## 4. Goodput: requests/s meeting TTFT < 1 s and TPOT < 50 ms
 
@@ -111,7 +152,7 @@ The same workload ran with caching off and on, in one sweep. With caching on, ea
 
 ## 6. Speculative decoding acceptance
 
-The acceptance rate was 34.4–38.6% in every workload, rate and repeat, with a mean accepted length of 2.72–2.93 tokens per step. It was highest at 512–1,024 tokens and lowest on natural and len4096 prompts. Acceptance was the same with FP16 and AWQ targets, so AWQ does not make the draft's guesses worse. The progress presentation did not report an acceptance rate, so there is nothing to compare it with.
+The acceptance rate was 34.4–38.6% in every workload, rate and repeat, with a mean accepted length of 2.72–2.93 tokens per step. It was highest at 512–1,024 tokens and lowest on natural and len4096 prompts. Acceptance was the same with FP16 and AWQ targets, so AWQ does not make the draft's guesses worse. On the 3B model with synthetic prompts it was 54–56% (study 1) and 58–69% (study 2).
 
 ## 7. How repeatable the numbers are
 
@@ -126,31 +167,32 @@ Over all 168 settings, the median spread of TPOT across the 3 repeats ((max − 
 | Many requests share a system prompt | Turn prefix caching on (with AWQ, it gives the largest gain) | TTFT 510 → 65 ms and TPOT 91 → 17 ms at 12/s |
 | Speculative decoding with this draft | Not worth it on its own or with AWQ | AWQ alone is faster at every light-load point, and speculative decoding costs capacity |
 
-## 9. Compared with the progress presentation (29 Oct, Qwen2.5-3B)
+## 9. Compared with study 2 (Qwen2.5-3B)
 
-Numbers for the 3B model are quoted from the progress deck. Both rows use 1,024-token prompts.
+3B numbers are from [`../02_qwen2.5-3b_lengths/results/tables.md`](../02_qwen2.5-3b_lengths/results/tables.md). Both columns use prompts of about 1,024 tokens unless a length is given.
 
-| | Progress deck: Qwen2.5-3B, RTX PRO 4000 24 GB | This sweep: Qwen3-14B, A100 80GB |
+| | Study 2: Qwen2.5-3B, RTX PRO 4000 24 GB | This study: Qwen3-14B, A100 80GB |
 |---|---|---|
-| AWQ TPOT speed-up at 2 req/s | 2.6× (22 → 8.4 ms) | 2.10× (2.31× at 1 req/s) |
-| Speculative TPOT speed-up at 2 req/s | 2.1× | 1.35× |
+| AWQ TPOT speed-up at 2 req/s | 2.63× (22.2 → 8.4 ms) | 2.10× (2.31× at 1 req/s) |
+| Speculative TPOT speed-up at 2 req/s | 2.09× | 1.35× |
 | Lowest TPOT at light load | AWQ + speculative (7.1 ms) | AWQ alone (9.5 ms at 1 req/s) |
-| Capacity, AWQ vs FP16 | AWQ about 8% higher (7.8 vs 7.2) | AWQ 17% lower (4.66 vs 5.60) |
-| Capacity, speculative vs FP16 at 2,048+ tokens | 25–29% higher | 7–11% lower |
-| Prompt tokens/s at capacity (FP16) | about 3.5–4.1k | about 5.5–5.6k |
+| Capacity, AWQ vs FP16 | AWQ 3% higher (7.34 vs 7.13) | AWQ 17% lower (4.66 vs 5.60) |
+| Capacity, speculative vs FP16 at 2,048+ tokens | 26–27% higher | 7–11% lower |
+| Prompt tokens/s at capacity (FP16) | 3.6–3.9k new tokens/s | 5.5–5.6k |
+| Speculative acceptance rate | 58–69% | 34–39% |
 
-What holds on the larger model: AWQ is the biggest light-load latency win, and prefill compute sets the capacity limit.
+What holds on the larger model: AWQ gives the largest light-load latency gain, and prefill compute sets the capacity limit.
 
-What does not hold: speculative decoding stops paying off on the 14B model. Its speed-up is smaller, it no longer stacks with AWQ, and it costs capacity instead of adding it. AWQ also costs capacity once prompts are long.
+What does not hold: speculative decoding's speed-up is smaller, it no longer adds to AWQ, and it costs capacity where study 2 showed a gain. AWQ also costs capacity once prompts are long.
 
-The deck's capacity numbers came from prompts whose first half was shared, with prefix caching on. So they include cache hits, and this sweep's numbers (caching off, unshared prompts) are not like-for-like. The deck also ran one repeat per setting, about 1,000 requests per run, on synthetic prompts. Small differences between the two columns therefore mean little. The large reversals (speculative capacity, AWQ + speculative vs AWQ) are far outside the 3-repeat spread here.
+The two columns are not like-for-like. Study 2 used synthetic prompts whose first half was shared, with prefix caching on, so its capacity includes cache hits; it ran one repeat per setting with 992 requests per run. This study uses real prompts with caching off, 3 repeats and 200 requests per run. Small differences between the columns therefore mean little. The reversals (speculative capacity, AWQ + speculative vs AWQ) are far outside the 3-repeat spread measured here.
 
 ## Caveats
 
-- **Comparing with the 3B results is confounded.** The model family (Qwen2.5 → Qwen3), size, GPU (RTX PRO 4000 → A100), prompts (synthetic → real), requests per run (about 1,000 → 200), repeats (1 → 3) and prefix caching (on → off) all changed at once. A difference between the two sweeps cannot be blamed on model size alone. A Qwen3-4B run on the same A100 with the same prompts would isolate model size.
+- **Comparing with the 3B results is confounded.** The model family (Qwen2.5 → Qwen3), size, GPU (RTX PRO 4000 → A100), prompts (synthetic → real), requests per run (992 → 200), repeats (1 → 3) and prefix caching (on → off) all changed at once. A difference between the two sweeps cannot be attributed to model size alone. A Qwen3-4B run on the same A100 with the same prompts would isolate model size.
 - 200 requests per run means arrivals at 12/s span only about 17 s. Overloaded runs show what happens as a queue builds up, not a steady state.
 - The rate grid is coarse, so capacity and goodput between grid points are not measured. For natural and len512 prompts, 12/s did not saturate most setups.
 - Output is fixed at 128 tokens with `--ignore-eos`, so TPOT compares cleanly but output length does not vary as it would with real answers. Output quality, including AWQ's effect on it, was not measured.
 - The cause of AWQ's lower prefill throughput (section 3) is a hypothesis, not profiled.
-- One run (FP16, natural, 1/s, repeat 1) lost 1 of 200 requests to a dropped connection. It was re-run at the end and got 200 of 200. The original file is kept but not used.
+- One run (FP16, natural, 1/s, repeat 1) lost 1 of 200 requests to a dropped connection. It was re-run at the end and got 200 of 200. The original file is kept as `data/raw/fp16_natural_rate1_rep1.failed199.json.gz.excluded` and is not used.
 - The speculative setups use one draft model (0.6B) and one draft length (5 tokens). A shorter draft might do better under load.
