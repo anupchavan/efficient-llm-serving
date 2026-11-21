@@ -1,0 +1,5 @@
+# Analysis and tests. The benchmark host installs vllm[bench]==0.30.0 separately
+# (evaluation/03_qwen3-14b_sharegpt/scripts/setup_host.sh).
+pandas==3.0.5
+matplotlib==3.11.2
+pytest==9.1.1
