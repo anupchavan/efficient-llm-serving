@@ -1,10 +1,11 @@
-"""v2/data/raw -> v2/data/goodput.csv: per-request SLO check for every run.
+"""data/raw -> data/goodput.csv: per-request SLO check for every run.
 
 A request meets the target when its TTFT < 1 s and its TPOT < 50 ms, with
 TPOT = (latency - TTFT) / (output tokens - 1), the same formula as summarise.py.
 goodput = requests meeting both / run duration (requests/s).
 """
-import csv, glob, json, os, re, sys
+import csv, os, re, sys
+from rawio import runs
 
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..')
 RAW = sys.argv[1] if len(sys.argv) > 1 else os.path.join(ROOT, 'data', 'raw')
@@ -12,11 +13,10 @@ TTFT_S, TPOT_S = 1.0, 0.050
 NAME = re.compile(r'(?P<config>.+?)_(?P<workload>natural|prefix|len\d+)_rate(?P<rate>[\d.]+)_rep(?P<rep>\d+)\.json$')
 
 rows = []
-for f in sorted(glob.glob(os.path.join(RAW, '*.json'))):
-    m = NAME.search(os.path.basename(f))
+for name, d in runs(RAW):
+    m = NAME.search(name)
     if not m:
         continue
-    d = json.load(open(f))
     n = len(d['ttfts'])
     meet_ttft = meet_tpot = meet_both = 0
     for i in range(n):

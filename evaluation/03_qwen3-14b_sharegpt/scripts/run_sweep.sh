@@ -1,28 +1,29 @@
 #!/bin/bash
-# Larger-model sweep with real prompts. Run from the repository root on the GPU host.
+# Qwen3-14B sweep with real prompts. Run on the GPU host after scripts/setup_host.sh.
 #
-#   PILOT=1 ./v2/scripts/run_sweep.sh   short pilot: measures capacity and time per run
-#   ./v2/scripts/run_sweep.sh           full sweep (set RATES after the pilot)
+#   PILOT=1 ./scripts/run_sweep.sh   16-run pilot: 2 configurations, 2 prompt lengths, 4 rates
+#   ./scripts/run_sweep.sh           full sweep, 504 runs
 #
 # Finished runs are skipped, so the script can be restarted after a disconnect.
 # Prefix caching is OFF for every main configuration, so repeated or similar
 # prompts never reuse cached work. It is only switched on in the prefix experiment,
 # which runs the same workload with caching off and on.
 set -u
+cd "$(dirname "$0")/.."   # paths below are relative to this study folder
 export VLLM_USE_FLASHINFER_SAMPLER=0
 
 BASE_MODEL=${BASE_MODEL:-Qwen/Qwen3-14B}
 AWQ_MODEL=${AWQ_MODEL:-Qwen/Qwen3-14B-AWQ}
 DRAFT_MODEL=${DRAFT_MODEL:-Qwen/Qwen3-0.6B}
-PROMPTS=${PROMPTS:-./v2/prompts}
-OUT=${OUT:-./v2/data/raw}
+PROMPTS=${PROMPTS:-./prompts}
+OUT=${OUT:-./data/raw}
 OUTPUT_LEN=128
 MAX_MODEL_LEN=8192
 # Qwen's recommended sampling for non-thinking mode, set explicitly so every run matches.
 SAMPLING="--temperature 0.7 --top-p 0.8 --top-k 20"
 
 if [ "${PILOT:-0}" = 1 ]; then
-    OUT=./v2/data/pilot
+    OUT=./data/pilot
     RATES=(1 2 4 8)
     WORKLOADS=(len1024 len4096)
     REPEATS=1
@@ -40,7 +41,7 @@ else
     CONFIGS=(${CONFIGS:-fp16 awq spec awq_spec})
     PREFIX_EXPERIMENT=${PREFIX_EXPERIMENT:-1}
 fi
-mkdir -p "$OUT" ./v2/logs
+mkdir -p "$OUT" ./logs
 
 SPEC="--speculative-config {\"method\":\"draft_model\",\"model\":\"$DRAFT_MODEL\",\"num_speculative_tokens\":5}"
 NO_CACHE="--no-enable-prefix-caching"
@@ -65,17 +66,17 @@ start_server() {
     echo "=== $NAME: $MODEL $ARGS"
     # ARGS is unquoted on purpose so the flags are split.
     vllm serve "$MODEL" --gpu-memory-utilization 0.95 --max-model-len $MAX_MODEL_LEN \
-        --seed 0 $ARGS > "./v2/logs/server_$NAME.log" 2>&1 &
+        --seed 0 $ARGS > "./logs/server_$NAME.log" 2>&1 &
     SERVER_PID=$!
     local WAITED=0
     until curl -s http://localhost:8000/health > /dev/null; do
-        kill -0 $SERVER_PID 2>/dev/null || { echo "server $NAME died, see v2/logs/server_$NAME.log"; return 1; }
+        kill -0 $SERVER_PID 2>/dev/null || { echo "server $NAME died, see logs/server_$NAME.log"; return 1; }
         sleep 5; WAITED=$((WAITED + 5))
         [ $WAITED -gt 1800 ] && { echo "server $NAME not up after 30 min"; kill $SERVER_PID; return 1; }
     done
     # Record what the server actually chose (KV blocks, flags) next to the data.
     grep -E "KV cache|num_gpu_blocks|Maximum concurrency|prefix|speculative" \
-        "./v2/logs/server_$NAME.log" > "$OUT/server_$NAME.txt" || true
+        "./logs/server_$NAME.log" > "$OUT/server_$NAME.txt" || true
     nvidia-smi --query-gpu=name,memory.total,memory.used,driver_version --format=csv >> "$OUT/server_$NAME.txt"
 }
 
@@ -113,15 +114,15 @@ run_grid() {
                 --num-prompts $NUM_PROMPTS --request-rate $RATE --seed $REP \
                 --save-result --save-detailed --result-filename "$F" \
                 --metadata config=$NAME workload=$WL rep=$REP \
-                >> "./v2/logs/bench_$NAME.log" 2>&1 || {
+                >> "./logs/bench_$NAME.log" 2>&1 || {
                 # Stop at the first failure instead of burning GPU time on a broken setup.
-                echo "FAILED $F, see v2/logs/bench_$NAME.log"; return 1; }
+                echo "FAILED $F, see logs/bench_$NAME.log"; return 1; }
             sleep 2
         done
     done
 }
 
-# Repeats are the outer loop, so if the money or the pod runs out, every
+# Repeats are the outer loop, so if the sweep is cut short, every
 # configuration already has the same number of complete repeats.
 PREFIX_CONFIGS=()
 [ "$PREFIX_EXPERIMENT" = 1 ] && PREFIX_CONFIGS=(fp16_cacheoff fp16_cacheon awq_cacheoff awq_cacheon)

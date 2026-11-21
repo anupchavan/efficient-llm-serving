@@ -1,11 +1,12 @@
-"""v2/data/raw -> v2/data/summary.csv, with checks on every run.
+"""data/raw -> data/summary.csv, with checks on every run.
 
 For each run the median TTFT and TPOT are recomputed from the per-request
 arrays (saved with --save-detailed) and compared with what vllm bench reported.
-Any run that fails a check is listed in v2/data/checks.txt and flagged in the
+Any run that fails a check is listed in data/checks.txt and flagged in the
 summary, so it is never used without being looked at first.
 """
-import csv, glob, json, os, re, statistics, sys
+import csv, os, re, statistics, sys
+from rawio import runs
 
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..')
 RAW = sys.argv[1] if len(sys.argv) > 1 else os.path.join(ROOT, 'data', 'raw')
@@ -45,17 +46,16 @@ def check(d):
 
 
 rows, report = [], []
-for f in sorted(glob.glob(os.path.join(RAW, '*.json'))):
-    m = NAME.search(os.path.basename(f))
+for name, d in runs(RAW):
+    m = NAME.search(name)
     if not m:
         continue
-    d = json.load(open(f))
     problems, extra = check(d)
     rows.append(dict(config=m['config'], workload=m['workload'], rate=float(m['rate']),
                      rep=int(m['rep']), **extra, **{k: d.get(k) for k in KEYS},
                      checks='ok' if not problems else 'FLAGGED'))
     if problems:
-        report.append(f"{os.path.basename(f)}: " + '; '.join(problems))
+        report.append(f"{name}: " + '; '.join(problems))
 
 if not rows:
     sys.exit(f'no result files in {RAW}')
