@@ -1,0 +1,145 @@
+#!/bin/bash
+# Qwen3-14B sweep with real prompts. Run on the GPU host after scripts/setup_host.sh.
+#
+#   PILOT=1 ./scripts/run_sweep.sh   16-run pilot: 2 configurations, 2 prompt lengths, 4 rates
+#   ./scripts/run_sweep.sh           full sweep, 504 runs
+#
+# Finished runs are skipped, so the script can be restarted after a disconnect.
+# Prefix caching is OFF for every main configuration, so repeated or similar
+# prompts never reuse cached work. It is only switched on in the prefix experiment,
+# which runs the same workload with caching off and on.
+set -u
+cd "$(dirname "$0")/.."   # paths below are relative to this study folder
+export VLLM_USE_FLASHINFER_SAMPLER=0
+
+BASE_MODEL=${BASE_MODEL:-Qwen/Qwen3-14B}
+AWQ_MODEL=${AWQ_MODEL:-Qwen/Qwen3-14B-AWQ}
+DRAFT_MODEL=${DRAFT_MODEL:-Qwen/Qwen3-0.6B}
+PROMPTS=${PROMPTS:-./prompts}
+OUT=${OUT:-./data/raw}
+OUTPUT_LEN=128
+MAX_MODEL_LEN=8192
+# Qwen's recommended sampling for non-thinking mode, set explicitly so every run matches.
+SAMPLING="--temperature 0.7 --top-p 0.8 --top-k 20"
+
+if [ "${PILOT:-0}" = 1 ]; then
+    OUT=./data/pilot
+    RATES=(1 2 4 8)
+    WORKLOADS=(len1024 len4096)
+    REPEATS=1
+    NUM_PROMPTS=200
+    CONFIGS=(fp16 awq_spec)
+    PREFIX_EXPERIMENT=0
+else
+    # Rates from the 2026-11-05 pilot: FP16 kept up with 8 req/s at ~1k tokens but
+    # saturated by 2 req/s at ~4k tokens, so the grid spans both regimes.
+    RATES=(${RATES:-1 2 3 4 6 8 12})
+    WORKLOADS=(${WORKLOADS:-natural len512 len1024 len2048 len4096})
+    REPEATS=${REPEATS:-3}
+    # len4096 has only 215 distinct real prompts, so 200 keeps every run free of repeats.
+    NUM_PROMPTS=${NUM_PROMPTS:-200}
+    CONFIGS=(${CONFIGS:-fp16 awq spec awq_spec})
+    PREFIX_EXPERIMENT=${PREFIX_EXPERIMENT:-1}
+fi
+mkdir -p "$OUT" ./logs
+
+SPEC="--speculative-config {\"method\":\"draft_model\",\"model\":\"$DRAFT_MODEL\",\"num_speculative_tokens\":5}"
+NO_CACHE="--no-enable-prefix-caching"
+CACHE="--enable-prefix-caching"
+
+model_of() { case $1 in awq*) echo "$AWQ_MODEL" ;; *) echo "$BASE_MODEL" ;; esac; }
+args_of() {
+    case $1 in
+        fp16)     echo "$NO_CACHE" ;;
+        awq)      echo "--quantization awq $NO_CACHE" ;;
+        spec)     echo "$SPEC $NO_CACHE" ;;
+        awq_spec) echo "--quantization awq $SPEC $NO_CACHE" ;;
+        fp16_cacheoff) echo "$NO_CACHE" ;;
+        fp16_cacheon)  echo "$CACHE" ;;
+        awq_cacheoff)  echo "--quantization awq $NO_CACHE" ;;
+        awq_cacheon)   echo "--quantization awq $CACHE" ;;
+    esac
+}
+
+start_server() {
+    local NAME=$1 MODEL=$2 ARGS=$3
+    echo "=== $NAME: $MODEL $ARGS"
+    # ARGS is unquoted on purpose so the flags are split.
+    vllm serve "$MODEL" --gpu-memory-utilization 0.95 --max-model-len $MAX_MODEL_LEN \
+        --seed 0 $ARGS > "./logs/server_$NAME.log" 2>&1 &
+    SERVER_PID=$!
+    local WAITED=0
+    until curl -s http://localhost:8000/health > /dev/null; do
+        kill -0 $SERVER_PID 2>/dev/null || { echo "server $NAME died, see logs/server_$NAME.log"; return 1; }
+        sleep 5; WAITED=$((WAITED + 5))
+        [ $WAITED -gt 1800 ] && { echo "server $NAME not up after 30 min"; kill $SERVER_PID; return 1; }
+    done
+    # Record what the server actually chose (KV blocks, flags) next to the data.
+    grep -E "KV cache|num_gpu_blocks|Maximum concurrency|prefix|speculative" \
+        "./logs/server_$NAME.log" > "$OUT/server_$NAME.txt" || true
+    nvidia-smi --query-gpu=name,memory.total,memory.used,driver_version --format=csv >> "$OUT/server_$NAME.txt"
+}
+
+stop_server() { kill $SERVER_PID; wait $SERVER_PID 2>/dev/null; sleep 5; }
+
+# With prefix caching on, a prompt the server has already seen would be served
+# from cache. So each prefix run gets its own slice of user prompts that no
+# earlier run on this server used; only the system prompts repeat.
+prefix_slice() {
+    local K=$1 FILE="$PROMPTS/prefix.jsonl" S="$PROMPTS/.slice.jsonl"
+    local FROM=$((K * NUM_PROMPTS + 1)) TO=$(((K + 1) * NUM_PROMPTS))
+    [ "$(wc -l < "$FILE")" -ge $TO ] || { echo "prefix.jsonl too short for run $K" >&2; return 1; }
+    sed -n "${FROM},${TO}p" "$FILE" > "$S"
+    echo "$S"
+}
+
+run_grid() {
+    local NAME=$1 MODEL=$2 REP=$3; shift 3
+    local WLS=("$@") I=0
+    for WL in "${WLS[@]}"; do
+        for RATE in "${RATES[@]}"; do
+            local F="$OUT/${NAME}_${WL}_rate${RATE}_rep${REP}.json"
+            local DATA="$PROMPTS/$WL.jsonl" ORDER=""
+            if [ "$WL" = prefix ]; then
+                # Slice number unique per (repeat, rate); cache-off and cache-on use the same slices.
+                DATA=$(prefix_slice $(((REP - 1) * ${#RATES[@]} + I))) || return 1
+                ORDER="--disable-shuffle"
+            fi
+            I=$((I + 1))
+            [ -f "$F" ] && { echo "skip $F"; continue; }
+            # --seed REP draws a different shuffle of the prompt file per repeat.
+            vllm bench serve --model "$MODEL" \
+                --dataset-name custom --dataset-path "$DATA" $ORDER --skip-chat-template \
+                --custom-output-len $OUTPUT_LEN --ignore-eos $SAMPLING \
+                --num-prompts $NUM_PROMPTS --request-rate $RATE --seed $REP \
+                --save-result --save-detailed --result-filename "$F" \
+                --metadata config=$NAME workload=$WL rep=$REP \
+                >> "./logs/bench_$NAME.log" 2>&1 || {
+                # Stop at the first failure instead of burning GPU time on a broken setup.
+                echo "FAILED $F, see logs/bench_$NAME.log"; return 1; }
+            sleep 2
+        done
+    done
+}
+
+# Repeats are the outer loop, so if the sweep is cut short, every
+# configuration already has the same number of complete repeats.
+PREFIX_CONFIGS=()
+[ "$PREFIX_EXPERIMENT" = 1 ] && PREFIX_CONFIGS=(fp16_cacheoff fp16_cacheon awq_cacheoff awq_cacheon)
+for REP in $(seq 1 $REPEATS); do
+    for C in "${CONFIGS[@]}" "${PREFIX_CONFIGS[@]}"; do
+        case $C in *_cache*) WLS=(prefix) ;; *) WLS=("${WORKLOADS[@]}") ;; esac
+        # Skip the server start when every file for this repeat already exists.
+        TODO=0
+        for WL in "${WLS[@]}"; do for RATE in "${RATES[@]}"; do
+            [ -f "$OUT/${C}_${WL}_rate${RATE}_rep${REP}.json" ] || TODO=1
+        done; done
+        [ $TODO = 0 ] && continue
+        M=$(model_of $C)
+        start_server $C "$M" "$(args_of $C)" || { echo "stopping: server $C failed"; exit 1; }
+        run_grid $C "$M" $REP "${WLS[@]}" || { stop_server; echo "stopping: $C rep $REP failed"; exit 1; }
+        stop_server
+        echo "finished $C rep $REP at $(date -u +%H:%M:%SZ)"
+    done
+done
+echo "done"
