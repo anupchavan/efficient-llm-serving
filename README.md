@@ -8,7 +8,7 @@ A benchmark study of four serving optimisations in vLLM on one GPU: AWQ weight q
 - Report: [`docs/Project_Report.pdf`](docs/Project_Report.pdf)
 - Decision records: [`docs/Architecture_Decision_Records.md`](docs/Architecture_Decision_Records.md)
 - Presentation: [`docs/Final_Presentation.pdf`](docs/Final_Presentation.pdf)
-- Demo walkthrough: [`docs/Demo_Script.md`](docs/Demo_Script.md)
+- Demo path: the steps under [Setup and tests](#setup-and-tests-no-gpu-needed), then [`evaluation/README.md`](evaluation/README.md) to regenerate the tables
 
 ## Status
 
@@ -59,7 +59,7 @@ evaluation/01_qwen2.5-3b_1024tok/   study 1: 201 runs, Qwen2.5-3B, one prompt le
 evaluation/02_qwen2.5-3b_lengths/   study 2: 864 runs, Qwen2.5-3B, six prompt lengths
 evaluation/03_qwen3-14b_sharegpt/   study 3: 504 runs, Qwen3-14B, real prompts (final results)
 tests/                              pytest: regeneration, run checks, every quoted number
-docs/                               report, decision records, presentation, demo script, progress documents
+docs/                               report, decision records, presentation, progress documents
 ```
 
 Each study folder has `scripts/` (benchmark), `data/raw/` (one result file per run), `analysis/`, generated tables and its own README.

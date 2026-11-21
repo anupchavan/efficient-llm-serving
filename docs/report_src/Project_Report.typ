@@ -418,7 +418,6 @@ Two findings hold across all three studies: AWQ gives the largest light-load gai
   [Pilot run (end-to-end GPU workflow)], [#tree(s3 + "data/pilot", s3 + "data/pilot/")],
   [Studies 1 and 2], [#tree("evaluation/01_qwen2.5-3b_1024tok", "evaluation/01_…"), #tree("evaluation/02_qwen2.5-3b_lengths", "evaluation/02_…")],
   [Earlier reports and slides], [#tree("docs/progress", "docs/progress/")],
-  [Demo walkthrough], [#blob("docs/Demo_Script.md", "docs/Demo_Script.md")],
 )
 
 Mentor feedback and response: the feedback at the progress presentation (results on a 3B model are too noisy; repeat on a larger model) is answered by study 3 and recorded in ADR-006. No bonus claims are made.
