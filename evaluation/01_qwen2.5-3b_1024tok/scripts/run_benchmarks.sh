@@ -1,10 +1,11 @@
 #!/bin/bash
-# Runs the benchmark grid used in the report.
+# Runs the benchmark grid of this study.
 # For each configuration: start a vLLM server, send 1,000 requests at each rate,
 # repeat each rate REPEATS times, save one JSON per run, then stop the server.
 #
-# Usage: ./scripts/run_benchmarks.sh            (from the repository root)
+# Usage: ./scripts/run_benchmarks.sh
 # Already-finished runs are skipped, so the script can be restarted.
+cd "$(dirname "$0")/.."   # paths below are relative to this study folder
 
 export VLLM_USE_FLASHINFER_SAMPLER=0
 export VLLM_ATTENTION_BACKEND=FLASH_ATTN
